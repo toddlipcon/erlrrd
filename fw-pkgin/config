@@ -8,6 +8,8 @@ FW_PACKAGE_SHORT_DESCRIPTION="rrdtool binding for erlang. [ via an erlang Port. 
 FW_PACKAGE_DESCRIPTION="`cat README`"
 FW_PACKAGE_ARCHITECTURE_DEPENDENT="0"
 
+FW_SUBVERSION_TAG_ROOT="https://erlrrd.googlecode.com/svn/tags/"
+
 # Dependency information.  The native syntax corresponds to Debian,
 # http://www.debian.org/doc/debian-policy/ch-relationships.html
 # Section 7.1 "Syntax of Relationship Fields"
