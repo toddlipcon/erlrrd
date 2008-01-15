@@ -16,12 +16,6 @@
 
 -record( state, { port }  ).
 
-%-export([join/2]).
-%-export([do/2]).
-%-export([has_newline/1]).
-%-export([iodata_to_deeplist/1]).
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Public 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -33,6 +27,9 @@ start()      -> gen_server:start     ({local, ?MODULE}, ?MODULE, [], []).
 %% @spec stop() -> any()
 %% @doc stop the rrdtool gen_server
 stop()       -> gen_server:call      (?MODULE, stop).
+
+%% @doc calls gen_server:start_link
+start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @spec combine(List) -> List
 %%   List = [ term() ]
@@ -234,8 +231,6 @@ quit() -> stop().
 %% Gen server interface poo
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% @hidden
-start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @hidden
 init(_Args) -> 
