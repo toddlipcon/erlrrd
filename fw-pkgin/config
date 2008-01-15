@@ -2,11 +2,11 @@
 # environment variable FW_PACKAGE_DEFAULT_MAINTAINER if non-empty
 
 FW_PACKAGE_NAME="erlrrd"
-FW_PACKAGE_VERSION="0.0.0"
-FW_PACKAGE_MAINTAINER="fess <fess@McBean>"
-FW_PACKAGE_SHORT_DESCRIPTION="A short description."
+FW_PACKAGE_VERSION="0.1.0"
+FW_PACKAGE_MAINTAINER="fess <fess-erlrrd@fess.org>"
+FW_PACKAGE_SHORT_DESCRIPTION="rrdtool binding for erlang. [ via an erlang Port. ]"
 FW_PACKAGE_DESCRIPTION="`cat README`"
-FW_PACKAGE_ARCHITECTURE_DEPENDENT="1"
+FW_PACKAGE_ARCHITECTURE_DEPENDENT="0"
 
 # Dependency information.  The native syntax corresponds to Debian,
 # http://www.debian.org/doc/debian-policy/ch-relationships.html
