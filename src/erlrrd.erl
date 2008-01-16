@@ -9,6 +9,7 @@
 -export([stop/0]).
 -export([combine/1, c/1]).
 
+-export([test/0]).
 
 -behaviour(gen_server).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -336,3 +337,7 @@ collect_response( Port, RespAcc, LineAcc) ->
     after 3000 ->  % TODO user configurable timeout.
             { error, timeout }
     end.
+
+%% cheeter test stubbb
+%% @hidden
+test() -> ok.
