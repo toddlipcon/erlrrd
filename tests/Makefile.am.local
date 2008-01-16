@@ -1,2 +1,2 @@
 TESTS = 		\
-  module-myapp
+  module-erlrrd

@@ -5,7 +5,7 @@
          graph/1, lastupdate/1, ls/0, cd/1, mkdir/1, pwd/0, quit/0 
          ]).
 
--export([start_link/0, start/0]).
+-export([start_link/1, start/0]).
 -export([stop/0]).
 -export([combine/1, c/1]).
 
@@ -20,16 +20,9 @@
 %% Public 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% @spec start() -> any()
-%% @doc start the rrdtool gen_server
-%%    calls gen_server:start
-start()      -> gen_server:start     ({local, ?MODULE}, ?MODULE, [], []).
-%% @spec stop() -> any()
-%% @doc stop the rrdtool gen_server
-stop()       -> gen_server:call      (?MODULE, stop).
 
 %% @doc calls gen_server:start_link
-start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(ExtProg) -> gen_server:start_link({local, ?MODULE}, ?MODULE, ExtProg, []).
 
 %% @spec combine(List) -> List
 %%   List = [ term() ]
@@ -227,15 +220,27 @@ pwd        ()     -> do(pwd,        []  ).
 quit() -> stop().
 
 
+%% @hidden
+%% @equiv start("rrdtool -")
+start() -> start("rrdtool -").
+%% @hidden
+%% @spec start(Args) -> any()
+%% @doc start the rrdtool gen_server
+%%    calls gen_server:start
+start(ExtProg)      -> gen_server:start     ({local, ?MODULE}, ?MODULE, ExtProg, []).
+%% @hidden
+%% @spec stop() -> any()
+%% @doc stop the rrdtool gen_server
+stop()       -> gen_server:call      (?MODULE, stop).
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Gen server interface poo
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 %% @hidden
-init(_Args) -> 
-  % TODO choose mechanism to allow user to set rrdtool
-  ExtProg = "rrdtool -",
+init(ExtProg) -> 
   process_flag(trap_exit, true),
   Port = erlang:open_port({spawn, ExtProg}, [ {line, 10000}, eof, exit_status, stream ] ),
   {ok, #state{port = Port}}.
@@ -245,7 +250,6 @@ init(_Args) ->
 %% @hidden
 handle_call({do, Action, Args }, _From, #state{port = Port} = State) ->
     Line = [ erlang:atom_to_list(Action), " ", Args , "\n"],
-    io:format("command to send: ~p\n", [ Line ] ),
     port_command(Port, Line),
     case collect_response(Port) of
         {response, Response} -> 
