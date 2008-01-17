@@ -1,4 +1,5 @@
 -module(erlrrd).
+-include_lib ("eunit/include/eunit.hrl").
 
 -export([create/1, update/1, updatev/1, dump/1, restore/1, last/1,
          first/1, info/1, fetch/1, tune/1, resize/1, xport/1,
@@ -22,10 +23,13 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%% @spec start_link(RegName, ExtProg)
+%% @spec start_link(RegName, ExtProg) -> Result
 %%   RegName = { local, Name } | { global, Name } | Name | none 
 %%   ExtProg = list()
 %%   Name = atom()
+%%   Result = {ok,Pid} | ignore | {error,Error}
+%%     Pid = pid()
+%%     Error = {already_started,Pid} | shutdown | term()
 %% @doc calls gen_server:start_link
 %%
 %%   RegName is what to register this genserver as can be one of
