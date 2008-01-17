@@ -5,7 +5,7 @@
          graph/1, lastupdate/1, ls/0, cd/1, mkdir/1, pwd/0, quit/0 
          ]).
 
--export([start_link/1, start/0]).
+-export([start_link/2, start/0]).
 -export([stop/0]).
 -export([combine/1, c/1]).
 
@@ -22,8 +22,30 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+%% @spec start_link(RegName, ExtProg)
+%%   RegName = { local, Name } | { global, Name } | Name | none 
+%%   ExtProg = list()
+%%   Name = atom()
 %% @doc calls gen_server:start_link
-start_link(ExtProg) -> gen_server:start_link({local, ?MODULE}, ?MODULE, ExtProg, []).
+%%
+%%   RegName is what to register this genserver as can be one of
+%%     - Name register locally as Name same as { local, Name }
+%%     - {local, Name} register locally as Name
+%%     - {global, Name} register globally as Name
+%%     - none don't register. [ call gen_server:start_link/3 ]
+%%
+%%   ExtProg is the command passed to open_port()
+%%   usually "rrdtool -"
+start_link(RegName, ExtProg) ->
+  case RegName of
+    none -> 
+      gen_server:start_link(?MODULE, ExtProg, []);
+    { Type, Name } 
+      when Type =:= local orelse Type =:= global -> 
+        gen_server:start_link({Type, Name}, ?MODULE, ExtProg, []);
+    Name -> 
+      gen_server:start_link({local, Name}, ?MODULE, ExtProg, [])
+  end.
 
 %% @spec combine(List) -> List
 %%   List = [ term() ]

@@ -5,8 +5,12 @@
 
 
 start(_Type, _Args) -> 
-  { ok, ExtProg } = application:get_env(erlrrd, extprog),
-  erlrrd_sup:start_link(ExtProg).
+  case application:get_env(erlrrd, extprog) of
+    { ok, ExtProg } -> 
+      erlrrd_sup:start_link({erlrrd, ExtProg});
+    true -> 
+      erlrrd_sup:start_link({erlrrd, "rrdtool -"})
+  end.
 
 stop(_State) -> 
   ok. 
