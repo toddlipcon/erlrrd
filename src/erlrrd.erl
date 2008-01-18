@@ -3,14 +3,12 @@
 
 -export([create/1, update/1, updatev/1, dump/1, restore/1, last/1,
          first/1, info/1, fetch/1, tune/1, resize/1, xport/1,
-         graph/1, lastupdate/1, ls/0, cd/1, mkdir/1, pwd/0, quit/0 
+         graph/1, lastupdate/1, ls/0, cd/1, mkdir/1, pwd/0
          ]).
 
 -export([start_link/2, start/0]).
 -export([stop/0]).
 -export([combine/1, c/1]).
-
--export([test/0]).
 
 -behaviour(gen_server).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -41,14 +39,16 @@
 %%   ExtProg is the command passed to open_port()
 %%   usually "rrdtool -"
 start_link(RegName, ExtProg) ->
+  io:format("erlrrd:start_link(~p, ~p)~n", [RegName, ExtProg]),
   case RegName of
     none -> 
       gen_server:start_link(?MODULE, ExtProg, []);
     { Type, Name } 
       when Type =:= local orelse Type =:= global -> 
         gen_server:start_link({Type, Name}, ?MODULE, ExtProg, []);
-    Name -> 
-      gen_server:start_link({local, Name}, ?MODULE, ExtProg, [])
+    Name 
+      when is_atom(Name) -> 
+        gen_server:start_link({local, Name}, ?MODULE, ExtProg, [])
   end.
 
 %% @spec combine(List) -> List
@@ -74,6 +74,18 @@ combine(Args) ->
 %%   List = [ term() ]
 % @equiv combine(Args)
 c(Args) -> combine(Args).
+
+c_test_() -> 
+  [
+    ?_test(
+      [ 
+        ["\"", "these", "\""], " ",
+        ["\"", "are",   "\""], " ",
+        ["\"", "my",    "\""], " ",
+        ["\"", "args",  "\""]  
+      ] = combine(["these", "are", "my", "args"])),
+    ?_test([[ "\"", "a", "\""]] = combine(["a"]))
+  ].
 
 
 % rrdtool commands
@@ -232,7 +244,7 @@ mkdir      (Arg)  when is_list(Arg) -> do(mkdir,      Arg).
 %% @spec ls() -> { ok, Response }  | { error, Reason } 
 %%  Reason = iolist()
 %%  Response = iolist()
-%% @doc  return a directory listing from the rrdtool unix process'
+%% @doc  lists all *.rrd files in rrdtool unix process'
 %%       current working directory
 ls         ()     -> do(ls,         []  ).
 
@@ -243,9 +255,89 @@ ls         ()     -> do(ls,         []  ).
 %%       current working directory.
 pwd        ()     -> do(pwd,        []  ).
 
-%% @equiv stop()
-quit() -> stop().
+test_start_stop_(StartFun, StopFun, Tag) -> 
+  { spawn, 
+    { inorder,
+      [
+        { Tag, setup,
+          StartFun,
+          StopFun,
+          check_started_(Tag) 
+        },
+        check_stopped_(Tag)
+      ]
+    }
+  }.
 
+check_stopped_(Tag) ->
+  wrap_tag_(Tag,
+    [
+      ?_assertExit( { noproc, _ }, pwd()),
+      ?_assertExit( { noproc, _ }, mkdir("erlrrdtestdir")),
+      ?_assertExit( { noproc, _ }, ls())
+    ]
+  ).
+
+start_link_test_() -> 
+  test_start_stop_(
+    fun() -> 
+      {ok,Pid} = start_link(erlrrd, "rrdtool -"),
+      Pid 
+    end,
+    fun(Pid) -> 
+      true = exit(Pid, normal),
+      receive 
+        {'EXIT', Pid, Reason} -> Reason
+      after 3000 -> 
+        throw({ timeout, start_link_test_cleanup })
+      end
+    end,
+    "start_link test" 
+  ).
+
+start_stop_test_() ->
+  test_start_stop_(
+    fun()  -> {ok, _Pid} = start() end,
+    fun(_) -> stopped = stop()  end,
+    "start/0 stop/0"
+  ).
+
+start_sup_test_() ->
+  test_start_stop_(
+    fun() -> 
+      {ok,Pid} = erlrrd_sup:start_link(erlrrd, "rrdtool -"),
+      Pid 
+    end,
+    fun(Pid) -> 
+      true = exit(Pid, normal),
+      receive 
+        {'EXIT', Pid, Reason} -> Reason
+      after 3000 -> 
+        throw({ timeout, start_link_test_cleanup })
+      end
+    end,
+    "sup:start_link/2 exit/2" 
+  ).
+
+start_app_test_() -> 
+  test_start_stop_(
+    fun()  -> ok = erlrrd_app:start() end,
+    fun(_) -> ok = erlrrd_app:stop()  end,
+    "app:start/0 app:stop/0"
+  ).
+
+wrap_tag_(T,L) when is_list(L) -> 
+  [ { T, X } || X <- L ].
+
+check_started_(Tag) ->
+  wrap_tag_(Tag,
+    [
+      ?_test(ls()),
+      ?_test(pwd()),
+      ?_test(ok),
+      ?_test(ok)
+    ] 
+  ).
 
 %% @hidden
 %% @equiv start("rrdtool -")
@@ -259,6 +351,8 @@ start(ExtProg)      -> gen_server:start     ({local, ?MODULE}, ?MODULE, ExtProg,
 %% @spec stop() -> any()
 %% @doc stop the rrdtool gen_server
 stop()       -> gen_server:call      (?MODULE, stop).
+
+
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -323,6 +417,14 @@ join([Head | [] ], _Sep) ->
 join([Head | Tail], Sep) ->
   [ Head, Sep | join(Tail, Sep) ].
 
+join_test() -> 
+  [ "a", " ", "b", " ", "c"] = join(["a", "b", "c"], " ").
+join_test_() ->
+  [ 
+    ?_test([ "a", " ", "b", " ", "c"] = join(["a", "b", "c"], " ")),
+    ?_assertNot([ "a", "b", " ", "c"]  =:= join(["a", "b", "c"], " "))
+  ].
+
 has_newline([]) -> false;
 has_newline(<<>>) -> false;
 has_newline([ H |  T]) 
@@ -341,6 +443,20 @@ has_newline(<<H:8,T/binary>>) ->
     H =:= $\n -> true;
     true -> has_newline(T)
   end.
+
+has_newline_test_() ->
+  [ 
+    ?_test( true  = has_newline("\n")),
+    ?_test( true  = has_newline(["\n"])),
+    ?_test( true  = has_newline(["these", ["are", [ "my args" ] | <<"newline\n">> ], "so", "there"])),
+    ?_test( false = has_newline(["these", ["are", [ "my args" ] | <<"newline">> ], "so", "there"])),
+    ?_test( true  = has_newline(["these\n", ["are", [ "my args" ] | <<"newline">> ], "so", "there"])),
+    ?_test( true  = has_newline(
+      ["these", ["are", [ "my args" | [[[[[[[[ "blah\n"]]]]]]]] ] | <<"newline">> ], "so", "there"])),
+    ?_test( false = has_newline("")),
+    ?_test( false = has_newline([])),
+    ?_test( false = has_newline(<<>>))
+  ].
 
 
 collect_response(Port) ->
@@ -363,7 +479,3 @@ collect_response( Port, RespAcc, LineAcc) ->
     after 3000 ->  % TODO user configurable timeout.
             { error, timeout }
     end.
-
-%% cheeter test stubbb
-%% @hidden
-test() -> ok.

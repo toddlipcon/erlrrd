@@ -1,5 +1,7 @@
 # put whatever (auto)make commands here, they will be included from Makefile.am
 
+DIALYZERFLAGS = -Wno_improper_lists
+
 dist_erlappsrc_DATA = 		\
   $(wildcard *.erl)
 
