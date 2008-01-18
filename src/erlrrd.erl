@@ -6,7 +6,8 @@
          graph/1, lastupdate/1, ls/0, cd/1, mkdir/1, pwd/0
          ]).
 
--export([start_link/2, start/0]).
+-export([start_link/1, start_link/0]).
+-export([start/0]).
 -export([stop/0]).
 -export([combine/1, c/1]).
 
@@ -21,35 +22,21 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%% @spec start_link(RegName, ExtProg) -> Result
-%%   RegName = { local, Name } | { global, Name } | Name | none 
-%%   ExtProg = list()
-%%   Name = atom()
+%% @spec start_link(RRDToolCmd) -> Result
+%%   RRDToolCmd = string()
 %%   Result = {ok,Pid} | ignore | {error,Error}
 %%     Pid = pid()
 %%     Error = {already_started,Pid} | shutdown | term()
 %% @doc calls gen_server:start_link
-%%
-%%   RegName is what to register this genserver as can be one of
-%%     - Name register locally as Name same as { local, Name }
-%%     - {local, Name} register locally as Name
-%%     - {global, Name} register globally as Name
-%%     - none don't register. [ call gen_server:start_link/3 ]
-%%
-%%   ExtProg is the command passed to open_port()
+%%   RRDToolCmd is the command passed to open_port()
 %%   usually "rrdtool -"
-start_link(RegName, ExtProg) ->
-  io:format("erlrrd:start_link(~p, ~p)~n", [RegName, ExtProg]),
-  case RegName of
-    none -> 
-      gen_server:start_link(?MODULE, ExtProg, []);
-    { Type, Name } 
-      when Type =:= local orelse Type =:= global -> 
-        gen_server:start_link({Type, Name}, ?MODULE, ExtProg, []);
-    Name 
-      when is_atom(Name) -> 
-        gen_server:start_link({local, Name}, ?MODULE, ExtProg, [])
-  end.
+start_link(RRDToolCmd) ->
+  gen_server:start_link({local, ?MODULE}, ?MODULE, RRDToolCmd, []).
+%% @equiv start_link("rrdtool -")
+start_link() ->
+  start_link("rrdtool -").
+
+
 
 %% @spec combine(List) -> List
 %%   List = [ term() ]
@@ -255,10 +242,30 @@ ls         ()     -> do(ls,         []  ).
 %%       current working directory.
 pwd        ()     -> do(pwd,        []  ).
 
+
+
+%% @hidden
+%% @equiv start("rrdtool -")
+start() -> start("rrdtool -").
+%% @hidden
+%% @spec start(Args) -> any()
+%% @doc start the rrdtool gen_server
+%%    calls gen_server:start
+start(RRDToolCmd)      -> gen_server:start     ({local, ?MODULE}, ?MODULE, RRDToolCmd, []).
+%% @hidden
+%% @spec stop() -> any()
+%% @doc stop the rrdtool gen_server
+stop()       -> gen_server:call      (?MODULE, stop).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%  eunit,  test starting and stopping.
+%% 
 test_start_stop_(StartFun, StopFun, Tag) -> 
   { spawn, 
     { inorder,
       [
+        check_stopped_(Tag),
         { Tag, setup,
           StartFun,
           StopFun,
@@ -278,45 +285,48 @@ check_stopped_(Tag) ->
     ]
   ).
 
+stop_helper_(Pid) ->
+  true = exit(Pid, normal),
+  receive 
+    {'EXIT', Pid, Reason} -> Reason
+  after 3000 -> 
+    throw({ timeout, Pid, "Pid not responding to EXIT?"})
+  end.
+
 start_link_test_() -> 
   test_start_stop_(
-    fun() -> 
-      {ok,Pid} = start_link(erlrrd, "rrdtool -"),
-      Pid 
-    end,
-    fun(Pid) -> 
-      true = exit(Pid, normal),
-      receive 
-        {'EXIT', Pid, Reason} -> Reason
-      after 3000 -> 
-        throw({ timeout, start_link_test_cleanup })
-      end
-    end,
+    fun() -> {ok,Pid} = start_link(), Pid end,
+    fun stop_helper_/1,
     "start_link test" 
   ).
+
 
 start_stop_test_() ->
   test_start_stop_(
     fun()  -> {ok, _Pid} = start() end,
-    fun(_) -> stopped = stop()  end,
+    fun(_) -> stopped    = stop()  end,
     "start/0 stop/0"
   ).
 
 start_sup_test_() ->
   test_start_stop_(
     fun() -> 
-      {ok,Pid} = erlrrd_sup:start_link(erlrrd, "rrdtool -"),
+      {ok,Pid} = erlrrd_sup:start_link(),
       Pid 
     end,
-    fun(Pid) -> 
-      true = exit(Pid, normal),
-      receive 
-        {'EXIT', Pid, Reason} -> Reason
-      after 3000 -> 
-        throw({ timeout, start_link_test_cleanup })
-      end
+    fun stop_helper_/1,
+    "sup:start_link/0 exit/2" 
+  ).
+
+start_sup2_test_() ->
+  test_start_stop_(
+    fun() -> 
+      check_cwd_helper_(),
+      {ok,Pid} = erlrrd_sup:start_link("./dummyrrdtool"),
+      Pid 
     end,
-    "sup:start_link/2 exit/2" 
+    fun stop_helper_/1,
+    "sup:start_link/1 exit/2" 
   ).
 
 start_app_test_() -> 
@@ -339,21 +349,52 @@ check_started_(Tag) ->
     ] 
   ).
 
-%% @hidden
-%% @equiv start("rrdtool -")
-start() -> start("rrdtool -").
-%% @hidden
-%% @spec start(Args) -> any()
-%% @doc start the rrdtool gen_server
-%%    calls gen_server:start
-start(ExtProg)      -> gen_server:start     ({local, ?MODULE}, ?MODULE, ExtProg, []).
-%% @hidden
-%% @spec stop() -> any()
-%% @doc stop the rrdtool gen_server
-stop()       -> gen_server:call      (?MODULE, stop).
+% check if the dir we're in end's in /tests
+check_cwd_helper_() ->
+   { ok, L } = file:get_cwd(),  
+   "stset/" ++ _  = lists:reverse(L).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%  eunit,  test interfaces
 
+datain_dataout_test_() ->
+  RRDFile = "foo.rrd",
+  { setup,
+    fun()  -> 
+      check_cwd_helper_(),
+      { error, enoent } = file:read_file_info(RRDFile),
+      {ok, _Pid} = start() 
+    end,
+    fun(_) -> 
+      stopped = stop(),
+      ok = file:delete(RRDFile)
+    end,
+    { inorder,
+      [
+        % create an rrd
+        fun() ->
+          Time = time_since_epoch(),
+          {ok, _ } = erlrrd:create([
+            io_lib:fwrite("~s --start ~B", [RRDFile, Time]),
+            " --step 300 DS:thedata:ABSOLUTE:300:U:U RRA:AVERAGE:0.5:1:17280"
+          ])
+        end,
+        % write to rrd
+        fun() -> 
+          Time = time_since_epoch() + 1,
+          {ok, _ } = erlrrd:update(
+            io_lib:fwrite("~s ~B:~B", [ RRDFile, Time, 100 ])
+          )
+        end,
+        % export rrd
+        % compare
+        fun() -> commas_are_cool end
+      ]
+    }
+  }.
 
+time_since_epoch() ->
+  calendar:datetime_to_gregorian_seconds(erlang:localtime()) - ( 719528 * 86400 ).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Gen server interface poo
@@ -361,9 +402,9 @@ stop()       -> gen_server:call      (?MODULE, stop).
 
 
 %% @hidden
-init(ExtProg) -> 
+init(RRDToolCmd) -> 
   process_flag(trap_exit, true),
-  Port = erlang:open_port({spawn, ExtProg}, [ {line, 10000}, eof, exit_status, stream ] ),
+  Port = erlang:open_port({spawn, RRDToolCmd}, [ {line, 10000}, eof, exit_status, stream ] ),
   {ok, #state{port = Port}}.
 
 %%

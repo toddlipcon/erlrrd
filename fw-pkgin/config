@@ -24,4 +24,4 @@ FW_PACKAGE_REPLACES=""
 FW_PACKAGE_BUILD_DEPENDS="eunit"
 FW_PACKAGE_BUILD_CONFLICTS=""
 
-FW_ERL_APP_ENVIRONMENT="[ {extprog, \"rrdtool -\"} ] "
+FW_ERL_APP_ENVIRONMENT="[ {rrdtoolcmd, \"rrdtool -\"} ] "
