@@ -70,8 +70,8 @@ c_test_() ->
         ["\"", "are",   "\""], " ",
         ["\"", "my",    "\""], " ",
         ["\"", "args",  "\""]  
-      ] = combine(["these", "are", "my", "args"])),
-    ?_test([[ "\"", "a", "\""]] = combine(["a"]))
+      ] = c(["these", "are", "my", "args"])),
+    ?_test([[ "\"", "a", "\""]] = c(["a"]))
   ].
 
 
@@ -122,10 +122,14 @@ restore    (Args) when is_list(Args) -> do(restore,    Args).
 %% @spec last(erlang:iodata()) -> { ok, Response }  |  
 %%   { error, Reason } 
 %%  Reason = iolist()
-%%  Response = iolist()
+%%  Response = integer()
 %% @doc    Return the date of the last data sample in an RRD. Check 
 %% [http://oss.oetiker.ch/rrdtool/doc/rrdlast.en.html rrdlast]
-last       (Args) when is_list(Args) -> do(last,       Args).
+last       (Args) when is_list(Args) -> 
+  case do(last,       Args) of
+    { error, Reason } -> { error, Reason };
+    { ok, [[Response]] } -> { ok, erlang:list_to_integer(Response) }
+  end.
 
 %% @spec lastupdate(erlang:iodata()) -> { ok, Response }  |  
 %%   { error, Reason } 
@@ -138,11 +142,15 @@ lastupdate (Args) when is_list(Args) -> do(lastupdate, Args).
 %% @spec first(erlang:iodata()) -> { ok, Response }  |  
 %%   { error, Reason } 
 %%  Reason = iolist()
-%%  Response = iolist()
+%%  Response = integer()
 %% @doc Return the date of the first data sample in an RRA within an
 %%       RRD. Check 
 %% [http://oss.oetiker.ch/rrdtool/doc/rrdfirst.en.html rrdfirst]
-first      (Args) when is_list(Args) -> do(first,      Args).
+first       (Args) when is_list(Args) -> 
+  case do(first,       Args) of
+    { error, Reason } -> { error, Reason };
+    { ok, [[Response]] } -> { ok, erlang:list_to_integer(Response) }
+  end.
 
 %% @spec info(erlang:iodata()) -> { ok, Response }  |  
 %%   { error, Reason } 
@@ -357,23 +365,34 @@ check_cwd_helper_() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%  eunit,  test interfaces
 
+-define(assertExists(File), 
+      { ok, _ } = file:read_file_info(File)).
+-define(assertEnoent(File), 
+      { error, enoent } = file:read_file_info(File)).
+
+
 datain_dataout_test_() ->
-  RRDFile = "foo.rrd",
-  PNGFile = "out.png",
+  Prefix = "foo",
+  RRDFile = Prefix ++ ".rrd",
+  PNGFile = Prefix ++ ".png",
+  RRDDump = Prefix ++ ".rrd.xml",
+  RRDRestoredFile = Prefix ++ ".2.rrd",
   Now = time_since_epoch(),
   Then = Now - 86400,
-  StepSize = 300,
+  StepSize = 60,
   Steps = round((Now - Then) / StepSize),
   { setup,
     fun()  -> 
       check_cwd_helper_(),
-      ok = file:delete(RRDFile),
-      { error, enoent } = file:read_file_info(RRDFile),
+      file:delete(RRDFile),
+      file:delete(RRDDump),
+      file:delete(RRDRestoredFile),
+      ?assertEnoent(RRDFile),
       {ok, _Pid} = start() 
     end,
     fun(_) -> 
       stopped = stop(),
-      ok %= file:delete(RRDFile)
+      ok 
     end,
     { inorder,
       [
@@ -404,6 +423,18 @@ datain_dataout_test_() ->
             lists:seq(1, Steps)
           )
         end,
+        % check the update times
+        fun() -> 
+          { ok, When } = erlrrd:last(RRDFile),
+          When = Now
+        end,
+        fun() -> 
+          { ok, When } = erlrrd:first(RRDFile),
+          % it's 'Then' rounded up to StepSize
+          RoundThen = (erlang:trunc(Then/StepSize) + 1) * StepSize,
+          %kio:format(user, "~p~n", [{ first, When, Then, RoundThen  }]),
+          When = RoundThen
+        end,
         % make a graph!! :)
         fun() -> 
           { ok, _ } = erlrrd:graph([
@@ -413,6 +444,20 @@ datain_dataout_test_() ->
           ])
           % ok, now how can we check the graph???  hmm.
         end,
+        % dump the rrd
+        fun() -> 
+          ?assertEnoent(RRDDump),
+          { ok, _ } = erlrrd:dump( RRDFile ++ " " ++ RRDDump ),
+          ?assertExists(RRDDump)
+        end,
+        % restore the rrd
+        fun() -> 
+          ?assertExists(RRDDump),
+          ?assertEnoent(RRDRestoredFile),
+          { ok, _ } = erlrrd:restore( RRDDump ++ " " ++ RRDRestoredFile ),
+          ?assertExists(RRDRestoredFile)
+        end,
+        check_last_(RRDRestoredFile, Now),
         % export rrd
         % compare
         fun() -> commas_are_cool end
@@ -420,8 +465,14 @@ datain_dataout_test_() ->
     }
   }.
 
+check_last_(RRDFile,Now) -> 
+  fun () -> 
+    { ok, When } = erlrrd:last(RRDFile),
+    When = Now
+  end.
+
 time_since_epoch() ->
-  calendar:datetime_to_gregorian_seconds(erlang:universaltime()) - ( 719528 * 86400 ).
+calendar:datetime_to_gregorian_seconds(erlang:universaltime()) - ( 719528 * 86400 ).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Gen server interface poo
@@ -430,17 +481,17 @@ time_since_epoch() ->
 
 %% @hidden
 init(RRDToolCmd) -> 
-  process_flag(trap_exit, true),
-  Port = erlang:open_port({spawn, RRDToolCmd}, [ {line, 10000}, eof, exit_status, stream ] ),
-  {ok, #state{port = Port}}.
+process_flag(trap_exit, true),
+Port = erlang:open_port({spawn, RRDToolCmd}, [ {line, 10000}, eof, exit_status, stream ] ),
+{ok, #state{port = Port}}.
 
 %%
 %% handle_call
 %% @hidden
 handle_call({do, Action, Args }, _From, #state{port = Port} = State) ->
-    Line = [ erlang:atom_to_list(Action), " ", Args , "\n"],
-    port_command(Port, Line),
-    case collect_response(Port) of
+Line = [ erlang:atom_to_list(Action), " ", Args , "\n"],
+port_command(Port, Line),
+case collect_response(Port) of
         {response, Response} -> 
             {reply, { ok, Response }, State};
         { error, timeout } ->
