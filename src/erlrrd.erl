@@ -201,7 +201,7 @@ graph      (Args) when is_list(Args) ->
   % TODO: regexp:match needs a string, will break w/binarys
   %   lists:flatten needs a deeplist, will break with iolists
   %   fix both of these.
-  case regexp:match(lists:flatten([ [ " ", X ] || X <- Args ]), " -( |$)") of
+  case regexp:match(lists:flatten(Args), " -( |$)") of
     { match, _, _ } -> 
       % graph to stdout will break this Ports parsing of reponses..
       { error, "Graphing to stdout not supported." };
@@ -359,32 +359,59 @@ check_cwd_helper_() ->
 
 datain_dataout_test_() ->
   RRDFile = "foo.rrd",
+  PNGFile = "out.png",
+  Now = time_since_epoch(),
+  Then = Now - 86400,
+  StepSize = 300,
+  Steps = round((Now - Then) / StepSize),
   { setup,
     fun()  -> 
       check_cwd_helper_(),
+      ok = file:delete(RRDFile),
       { error, enoent } = file:read_file_info(RRDFile),
       {ok, _Pid} = start() 
     end,
     fun(_) -> 
       stopped = stop(),
-      ok = file:delete(RRDFile)
+      ok %= file:delete(RRDFile)
     end,
     { inorder,
       [
         % create an rrd
         fun() ->
-          Time = time_since_epoch(),
           {ok, _ } = erlrrd:create([
-            io_lib:fwrite("~s --start ~B", [RRDFile, Time]),
-            " --step 300 DS:thedata:ABSOLUTE:300:U:U RRA:AVERAGE:0.5:1:17280"
+            io_lib:fwrite("~s --start ~B", [RRDFile, Then]),
+            io_lib:fwrite(" --step ~B DS:thedata:GAUGE:~B:U:U",
+              [ StepSize, StepSize ]),
+            io_lib:fwrite(" RRA:AVERAGE:0.5:1:~B",[Steps])
           ])
         end,
-        % write to rrd
+        % write sin wave to rrd
         fun() -> 
-          Time = time_since_epoch() + 1,
-          {ok, _ } = erlrrd:update(
-            io_lib:fwrite("~s ~B:~B", [ RRDFile, Time, 100 ])
+          lists:foreach(
+            fun(X) ->
+              Pi = math:pi(),
+              P = 5 * ( 
+                math:sin( 3*Pi/2 + X/(Steps / (8*Pi) )  )
+                + 1
+              ),
+
+               %io:format(user, "~s ~B:~f~n", [ RRDFile, Then + X * StepSize, P ]),
+              {ok, _ } = erlrrd:update(
+                io_lib:format("~s ~B:~f", [ RRDFile, Then + X * StepSize, P ])
+              )
+            end,
+            lists:seq(1, Steps)
           )
+        end,
+        % make a graph!! :)
+        fun() -> 
+          { ok, _ } = erlrrd:graph([
+            "-l 0 -r", " ",
+            "-w 700 -h 200 -a PNG ", PNGFile,
+            " DEF:thedata=foo.rrd:thedata:AVERAGE AREA:thedata#CC9945" 
+          ])
+          % ok, now how can we check the graph???  hmm.
         end,
         % export rrd
         % compare
@@ -394,7 +421,7 @@ datain_dataout_test_() ->
   }.
 
 time_since_epoch() ->
-  calendar:datetime_to_gregorian_seconds(erlang:localtime()) - ( 719528 * 86400 ).
+  calendar:datetime_to_gregorian_seconds(erlang:universaltime()) - ( 719528 * 86400 ).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Gen server interface poo
