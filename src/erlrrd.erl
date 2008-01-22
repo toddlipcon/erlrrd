@@ -295,7 +295,7 @@ stop_helper_(Pid, Timeout) ->
   receive 
     {'EXIT', Pid, Reason} -> Reason
   after Timeout -> 
-    throw({ timeout, Pid, "Pid not responding to EXIT?"})
+    throw({ timeout, { Pid, "Pid not responding to EXIT?"} })
   end.
 
 start_link_test_() -> 
@@ -592,9 +592,34 @@ cause_timeout_test_() ->
     end,
     fun stop_helper_/1,
     { inorder, [ 
-      ?_assertExit({port_timeout, _}, do(timeout, [], 10 )),
+      ?_assertExit({port_timeout, _}, do(timeout, [], 1 )),
       ?_assertMatch( {ok, _ }, ls() )
     ]}
+  }.
+
+stop_helper_test_() -> 
+  { setup, 
+    % start fun
+    fun() -> 
+      F = fun(F) -> 
+        receive
+          Any -> io:format(user,"~p Hey, got: ~p~n", [ self(), Any ])
+        end,
+        F(F)
+      end,
+      spawn(
+        fun() -> 
+          process_flag(trap_exit, true),
+          F(F)
+        end
+      )
+    end,
+    % stop fun,
+    fun(P) -> exit(P, kill) end,
+    % test gen
+    fun(P) -> 
+      ?_assertThrow({timeout,_}, stop_helper_(P, 1))
+    end
   }.
 
 code_change_test() -> 
@@ -607,9 +632,12 @@ code_change_test() ->
 
 %% @hidden
 init(RRDToolCmd) -> 
-process_flag(trap_exit, true),
-Port = erlang:open_port({spawn, RRDToolCmd}, [ {line, 10000}, eof, exit_status, stream ] ),
-{ok, #state{port = Port}}.
+  process_flag(trap_exit, true),
+  Port = erlang:open_port(
+    {spawn, RRDToolCmd},
+    [ {line, 10000}, eof, exit_status, stream ] 
+  ),
+  {ok, #state{port = Port}}.
 
 %%
 %% handle_call
@@ -624,10 +652,7 @@ handle_call({do, Action, Args, Timeout}, _From, #state{port = Port} = State) ->
             {stop, port_timeout, State};
         { error, Error } -> 
             {reply, { error, Error  }, State}
-  end;
-
-handle_call(stop, _From, State) -> 
-  {stop, normal, stopped, State}.
+  end.
 
 %% handle_cast
 %% @hidden
