@@ -206,10 +206,10 @@ xport      (Args) when is_list(Args) -> do(xport,      Args).
 %%         Check 
 %% [http://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html rrdgraph].
 graph      (Args) when is_list(Args) -> 
-  % TODO: regexp:match needs a string, will break w/binarys
-  %   lists:flatten needs a deeplist, will break with iolists
-  %   fix both of these.
-  case regexp:match(lists:flatten(Args), " -( |$)") of
+  % TODO: scan for this pattern w/out flattening the io_list? 
+  % TODO: support  graphing to stdout!!! :) 
+  Flat = erlang:binary_to_list(erlang:iolist_to_binary(Args)),
+  case regexp:match(Flat, "(^| )-( |$)") of
     { match, _, _ } -> 
       % graph to stdout will break this Ports parsing of reponses..
       { error, "Graphing to stdout not supported." };
@@ -486,7 +486,7 @@ datain_dataout_test_() ->
     }
   }.
 
-remote_cmd_test_() ->
+remote_cmds_test_() ->
   Dir = "makadir",
   { setup,
     fun() -> 
@@ -527,18 +527,35 @@ remote_cmd_test_() ->
   }.
 
 pass_newlines_test_() ->
+  M = "No newlines",
   { setup,
     fun start_helper_/0,
     fun stop_helper_/1,
     [ 
-      ?_assertMatch( { error, "No newlines" }, cd("..\n")),
-      ?_assertMatch( { error, "No newlines" }, info("fart.rrd\n")),
-      ?_assertMatch( { error, "No newlines" }, 
+      ?_assertMatch( { error, M }, cd("..\n")),
+      ?_assertMatch( { error, M }, info("fart.rrd\n")),
+      ?_assertMatch( { error, M }, 
         create(["foo.rrd bar baz", [[[[<<"blahdedah\n">>]]]], "haha"])
       ),
       fun() -> ok end
     ]
   }.
+
+graph_to_stdout_saftey_test_() -> 
+  M = { error, "Graphing to stdout not supported." },
+  [
+    ?_assertMatch( M, graph(" -")),
+    ?_assertMatch( M, graph("-")),
+    ?_assertMatch( M, graph(" - ")),
+    ?_assertMatch( M, graph([" ", "-"," "])),
+    ?_assertMatch( M, graph([" ", [[["-"]]]," "])),
+    ?_assertMatch( M, graph([" ", [[["-"]]]])),
+    ?_assertMatch( M, graph([[[["-"]]]," "])),
+    ?_assertMatch( M, graph([" ", [[[<<"-">>]]]," "])),
+    ?_assertMatch( M, graph([" ", [[[<<"-">>]]]])),
+    ?_assertMatch( M, graph([[[[<<"-">>]]]," "])),
+    fun() -> ok end
+  ].
 
 p_func(X,Steps) -> 
   Pi = math:pi(),
