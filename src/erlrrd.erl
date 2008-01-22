@@ -266,6 +266,8 @@ stop() -> erlrrd_app:stop().
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%  eunit,  test starting and stopping.
 %% 
+
+-define(spew(Args), io:format(user, "~p~n", [{Args}])).
 test_start_stop_(StartFun, StopFun, Tag) -> 
   { spawn, 
     { inorder,
@@ -445,6 +447,17 @@ datain_dataout_test_() ->
           % ok, now how can we check the graph???  hmm.
         end,
 
+        % run fetch
+        fun() -> 
+          { ok, _Data } = erlrrd:fetch([
+            RRDFile, " AVERAGE ",
+            io_lib:format(" --start ~B --end ~B", [ Then, Now ])
+          ]),
+          %?spew(Data),
+          %TODO check data
+          ok
+        end,
+
         % dump the rrd
         fun() -> 
           ?assertEnoent(RRDDump),
@@ -474,6 +487,19 @@ datain_dataout_test_() ->
             Response
           end
         },
+        
+        %lastupdate
+        fun() -> 
+          { ok, [ _, _, [Last]] } = lastupdate(RRDRestoredFile),
+          ?assertMatch(
+            {match, _, _ },
+            regexp:match(Last, 
+              % TODO make the regex match beginning of line? why no work? 
+              io_lib:format("~B", [ Now ])
+            )
+          ),
+          ok
+        end,
 
         % info 
         fun() -> 
@@ -484,6 +510,18 @@ datain_dataout_test_() ->
         fun() -> commas_are_cool end
       ]
     }
+  }.
+
+todo_better_test_() -> 
+  { setup,
+    fun start_helper_/0,
+    fun stop_helper_/1,
+    [
+       ?_assertMatch( {error, _ }, tune("blah") ),
+       ?_assertMatch( {error, _ }, resize("blah") ),
+       ?_assertMatch( {error, _ }, updatev("blah") ),
+       ?_test(ok)
+    ]
   }.
 
 remote_cmds_test_() ->
