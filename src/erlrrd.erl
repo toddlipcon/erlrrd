@@ -289,6 +289,9 @@ check_stopped_(Tag) ->
     ]
   ).
 
+start_helper_() -> 
+  {ok, Pid} = start_link(), 
+  Pid.
 stop_helper_(Pid) -> stop_helper_(Pid, 3000).
 stop_helper_(Pid, Timeout) ->
   true = exit(Pid, normal),
@@ -300,7 +303,7 @@ stop_helper_(Pid, Timeout) ->
 
 start_link_test_() -> 
   test_start_stop_(
-    fun() -> {ok,Pid} = start_link(), Pid end,
+    fun start_helper_/0,
     fun stop_helper_/1,
     "start_link test" 
   ).
@@ -385,10 +388,11 @@ datain_dataout_test_() ->
       file:delete(RRDDump),
       file:delete(RRDRestoredFile),
       ?assertEnoent(RRDFile),
-      ok = start() 
+      { ok, Pid } = start_link(),
+      Pid
     end,
-    fun(_) -> 
-      ok = stop(),
+    fun(Pid) -> 
+      stop_helper_(Pid),
       file:delete(RRDFile),
       file:delete(RRDDump),
       file:delete(RRDRestoredFile),
@@ -488,11 +492,11 @@ remote_cmd_test_() ->
     fun() -> 
       check_cwd_helper_(),
       ?assertEnoent(Dir),
-      ok = erlrrd_app:start()
+      start_helper_()
     end,
-    fun(_) -> 
+    fun(P) -> 
       file:del_dir(Dir),
-      ok = erlrrd_app:stop()
+      stop_helper_(P)
     end,
     { inorder, 
       [ 
@@ -524,8 +528,8 @@ remote_cmd_test_() ->
 
 pass_newlines_test_() ->
   { setup,
-    fun()  -> ok = start() end,
-    fun(_) -> ok = stop() end, 
+    fun start_helper_/0,
+    fun stop_helper_/1,
     [ 
       ?_assertMatch( { error, "No newlines" }, cd("..\n")),
       ?_assertMatch( { error, "No newlines" }, info("fart.rrd\n")),
@@ -560,15 +564,15 @@ cast(Blah) ->
 %%%%% eunit tests just for coverage %%%%%
 handle_cast_test_() ->
   { setup,
-    fun()  -> ok = start() end,
-    fun(_) -> ok = stop() end, 
+    fun start_helper_/0,
+    fun stop_helper_/1,
     ?_test(cast(blah))
   }.
 
 handle_info_test_() -> 
   { setup,
-    fun()  -> ok = start() end,
-    fun(_) -> ok = stop() end, 
+    fun start_helper_/0,
+    fun stop_helper_/1,
     ?_test(?MODULE ! yo)
   }.
 
@@ -576,7 +580,7 @@ cause_long_response_test_() ->
   { setup,
     fun()  -> 
       check_cwd_helper_(),
-      { ok, Pid } = erlrrd_sup:start_link("./dummyrrdtool -"),
+      { ok, Pid } = start_link("./dummyrrdtool -"),
       Pid
     end,
     fun stop_helper_/1,
