@@ -258,18 +258,10 @@ pwd        ()     ->
     { ok, [[Response]] } -> { ok, Response }
   end.
 
-%% @hidden
-%% @equiv start("rrdtool -")
-start() -> start("rrdtool -").
-%% @hidden
-%% @spec start(Args) -> any()
-%% @doc start the rrdtool gen_server
-%%    calls gen_server:start
-start(RRDToolCmd)      -> gen_server:start     ({local, ?MODULE}, ?MODULE, RRDToolCmd, []).
-%% @hidden
-%% @spec stop() -> any()
-%% @doc stop the rrdtool gen_server
-stop()       -> gen_server:call      (?MODULE, stop).
+%% @equiv erlrrd_app:start()
+start() -> erlrrd_app:start().
+%% @equiv erlrrd_app:stop()
+stop() -> erlrrd_app:stop().
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%  eunit,  test starting and stopping.
@@ -316,8 +308,8 @@ start_link_test_() ->
 
 start_stop_test_() ->
   test_start_stop_(
-    fun()  -> {ok, _Pid} = start() end,
-    fun(_) -> stopped    = stop()  end,
+    fun()  -> ok = start() end,
+    fun(_) -> ok = stop()  end,
     "start/0 stop/0"
   ).
 
@@ -393,10 +385,10 @@ datain_dataout_test_() ->
       file:delete(RRDDump),
       file:delete(RRDRestoredFile),
       ?assertEnoent(RRDFile),
-      {ok, _Pid} = start() 
+      ok = start() 
     end,
     fun(_) -> 
-      stopped = stop(),
+      ok = stop(),
       file:delete(RRDFile),
       file:delete(RRDDump),
       file:delete(RRDRestoredFile),
@@ -532,8 +524,8 @@ remote_cmd_test_() ->
 
 pass_newlines_test_() ->
   { setup,
-    fun()  -> start() end,
-    fun(_) -> stop() end, 
+    fun()  -> ok = start() end,
+    fun(_) -> ok = stop() end, 
     [ 
       ?_assertMatch( { error, "No newlines" }, cd("..\n")),
       ?_assertMatch( { error, "No newlines" }, info("fart.rrd\n")),
@@ -568,15 +560,15 @@ cast(Blah) ->
 %%%%% eunit tests just for coverage %%%%%
 handle_cast_test_() ->
   { setup,
-    fun()  -> start() end,
-    fun(_) -> stop() end, 
+    fun()  -> ok = start() end,
+    fun(_) -> ok = stop() end, 
     ?_test(cast(blah))
   }.
 
 handle_info_test_() -> 
   { setup,
-    fun()  -> start() end,
-    fun(_) -> stop() end, 
+    fun()  -> ok = start() end,
+    fun(_) -> ok = stop() end, 
     ?_test(?MODULE ! yo)
   }.
 
@@ -584,9 +576,10 @@ cause_long_response_test_() ->
   { setup,
     fun()  -> 
       check_cwd_helper_(),
-      start_link("./dummyrrdtool -") 
+      { ok, Pid } = erlrrd_sup:start_link("./dummyrrdtool -"),
+      Pid
     end,
-    fun(_) -> stop() end, 
+    fun stop_helper_/1,
     ?_test(do(longresponse, []))
   }.
 
