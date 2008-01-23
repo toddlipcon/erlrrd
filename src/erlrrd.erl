@@ -264,7 +264,6 @@ init([RRDToolCmd]) ->
   ),
   {ok, #state{port = Port}}.
 
-%%
 %% handle_call
 %% @hidden
 handle_call({do, Action, Args, Timeout}, _From, #state{port = Port} = State) ->
