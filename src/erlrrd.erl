@@ -22,6 +22,11 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+%% @equiv erlrrd_app:start()
+start() -> erlrrd_app:start().
+%% @equiv erlrrd_app:stop()
+stop() -> erlrrd_app:stop().
+
 %% @spec start_link(RRDToolCmd) -> Result
 %%   RRDToolCmd = string()
 %%   Result = {ok,Pid} | ignore | {error,Error}
@@ -31,19 +36,19 @@
 %%   RRDToolCmd is the command passed to open_port()
 %%   usually "rrdtool -"
 start_link(RRDToolCmd) ->
-  gen_server:start_link({local, ?MODULE}, ?MODULE, RRDToolCmd, []).
+  gen_server:start_link({local, ?MODULE}, ?MODULE, [RRDToolCmd], []).
 %% @equiv start_link("rrdtool -")
 start_link() ->
   start_link("rrdtool -").
-
-
 
 %% @spec combine(List) -> List
 %%   List = [ term() ]
 %% @doc "joins" and quotes the given arg list. 
 %%   takes a list of arguments, and returns a deeplist with 
 %%   each argument surrounded by double quotes
-%%   then separated by spaces
+%%   then separated by spaces. Note 
+%%   it does not try to escape any double quotes
+%%   in the arguments.
 %%
 %%   combine(["these", "are", "my args"]). ->
 %%
@@ -61,18 +66,6 @@ combine(Args) ->
 %%   List = [ term() ]
 % @equiv combine(Args)
 c(Args) -> combine(Args).
-
-c_test_() -> 
-  [
-    ?_test(
-      [ 
-        ["\"", "these", "\""], " ",
-        ["\"", "are",   "\""], " ",
-        ["\"", "my",    "\""], " ",
-        ["\"", "args",  "\""]  
-      ] = c(["these", "are", "my", "args"])),
-    ?_test([[ "\"", "a", "\""]] = c(["a"]))
-  ].
 
 
 % rrdtool commands
@@ -217,11 +210,11 @@ graph      (Args) when is_list(Args) ->
       do(graph, Args)
   end.
 
-% rrd "remote" commands
+%%%%% rrd "remote" commands %%%%
+
 %% @spec cd(erlang:iodata()) -> ok |  
 %%   { error, Reason } 
 %%  Reason = iolist()
-%%  Response = iolist()
 %% @doc   ask the rrdtool unix process to change directories
 %% 
 %%    erlrrd:cd("/usr/share/rrd/data").
@@ -258,16 +251,119 @@ pwd        ()     ->
     { ok, [[Response]] } -> { ok, Response }
   end.
 
-%% @equiv erlrrd_app:start()
-start() -> erlrrd_app:start().
-%% @equiv erlrrd_app:stop()
-stop() -> erlrrd_app:stop().
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Gen server interface poo
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% @hidden
+init([RRDToolCmd]) -> 
+  process_flag(trap_exit, true),
+  Port = erlang:open_port(
+    {spawn, RRDToolCmd},
+    [ {line, 10000}, eof, exit_status, stream ] 
+  ),
+  {ok, #state{port = Port}}.
+
+%%
+%% handle_call
+%% @hidden
+handle_call({do, Action, Args, Timeout}, _From, #state{port = Port} = State) ->
+  Line = [ erlang:atom_to_list(Action), " ", Args , "\n"],
+  port_command(Port, Line),
+  case collect_response(Port, Timeout) of
+        {response, Response} -> 
+            {reply, { ok, Response }, State};
+        { error, timeout } ->
+            {stop, port_timeout, State};
+        { error, Error } -> 
+            {reply, { error, Error  }, State}
+  end.
+
+%% handle_cast
+%% @hidden
+handle_cast(Msg, State) -> 
+  % io:format(user, "Got unexpected cast msg: ~p~n", [Msg]),
+  %% TODO error/event loging in erlang style.
+  {noreply, State}.
+
+%% handle_info
+%% @hidden
+handle_info(Msg, State) -> 
+  % io:format(user, "Got unexpected info msg: ~p~n", [Msg]),
+  %% TODO error/event loging in erlang style.
+  {noreply, State}.
+
+%% terminate
+%% @hidden
+terminate(_Reason, _State) -> ok.
+
+%% code_change
+%% @hidden
+code_change(_OldVsn, State, _Extra) -> 
+  {ok, State}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Private poo
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+do(Command, Args) -> 
+  do(Command, Args, 3000).
+do(Command, Args, Timeout) -> 
+  case has_newline(Args) of
+    true  -> { error, "No newlines" };
+    false -> gen_server:call (?MODULE, { do, Command, Args , Timeout} ) 
+  end.
+
+join([Head | [] ], _Sep) ->
+  [Head];
+join([Head | Tail], Sep) ->
+  [ Head, Sep | join(Tail, Sep) ].
+
+has_newline([]) -> false;
+has_newline(<<>>) -> false;
+has_newline([ H |  T]) 
+  when is_list(H); is_binary(H) ->
+    case has_newline(H) of
+      true -> true;
+      false -> has_newline(T)
+    end;
+has_newline([ H | T]) when is_integer(H) ->
+  if 
+    H =:= $\n -> true;
+    true -> has_newline(T)
+  end;
+has_newline(<<H:8,T/binary>>) ->
+  if 
+    H =:= $\n -> true;
+    true -> has_newline(T)
+  end.
+
+
+collect_response(Port, Timeout ) ->
+    collect_response(Port, [], [], Timeout ).
+
+collect_response( Port, RespAcc, LineAcc, Timeout) ->
+    receive
+        {Port, {data, {eol, "OK u:" ++ _T }}} ->
+            {response, lists:reverse(RespAcc)};
+        {Port, {data, {eol, "ERROR: " ++ Error }}} ->
+            {error, [ Error, lists:reverse(RespAcc)]};
+        {Port, {data, {eol, Result}}} ->
+            Line = lists:reverse([Result | LineAcc]),
+            collect_response(Port, [Line | RespAcc], [], Timeout);
+        {Port, {data, {noeol, Result}}} ->
+            collect_response(Port, RespAcc, [Result | LineAcc], Timeout)
+
+    %% Prevent the gen_server from hanging indefinitely in case the
+    %% spawned process is taking too long processing the request.
+    after Timeout ->  
+            { error, timeout }
+    end.
+-ifdef(EUNIT).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%  eunit,  test starting and stopping.
-%% 
+%% Test Helpers
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--define(spew(Args), io:format(user, "~p~n", [{Args}])).
 test_start_stop_(StartFun, StopFun, Tag) -> 
   { spawn, 
     { inorder,
@@ -283,6 +379,16 @@ test_start_stop_(StartFun, StopFun, Tag) ->
     }
   }.
 
+check_started_(Tag) ->
+  wrap_tag_(Tag,
+    [
+      ?_test(ls()),
+      ?_test(pwd()),
+      ?_test(ok),
+      ?_test(ok)
+    ] 
+  ).
+
 check_stopped_(Tag) ->
   wrap_tag_(Tag,
     [
@@ -290,6 +396,12 @@ check_stopped_(Tag) ->
       ?_assertExit( { noproc, _ }, ls())
     ]
   ).
+
+check_last_(RRDFile,Now) -> 
+  fun () -> 
+    { ok, When } = erlrrd:last(RRDFile),
+    When = Now
+  end.
 
 start_helper_() -> 
   {ok, Pid} = start_link(), 
@@ -303,13 +415,47 @@ stop_helper_(Pid, Timeout) ->
     throw({ timeout, { Pid, "Pid not responding to EXIT?"} })
   end.
 
+% check if the dir we're in end's in /tests
+check_cwd_helper_() ->
+   { ok, L } = file:get_cwd(),  
+   "stset/" ++ _  = lists:reverse(L).
+
+p_func(X,Steps) -> 
+  Pi = math:pi(),
+  5 * ( 
+    math:sin( 3*Pi/2 + X/(Steps / (8*Pi) )  )
+    + 1
+  ).
+
+time_since_epoch() ->
+  calendar:datetime_to_gregorian_seconds( erlang:universaltime())
+    - ( 719528 * 86400 ).
+
+wrap_tag_(T,L) when is_list(L) -> 
+  [ { T, X } || X <- L ].
+
+cast(Blah) -> 
+ gen_server:cast(?MODULE, Blah ).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Tests
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%% test starting and stopping %%%%
+
+-define(spew(Args), io:format(user, "~p~n", [{Args}])).
+-define(assertExists(File), 
+      { ok, _ } = file:read_file_info(File)).
+-define(assertEnoent(File), 
+      { error, enoent } = file:read_file_info(File)).
+
+
 start_link_test_() -> 
   test_start_stop_(
     fun start_helper_/0,
     fun stop_helper_/1,
     "start_link test" 
   ).
-
 
 start_stop_test_() ->
   test_start_stop_(
@@ -346,32 +492,7 @@ start_app_test_() ->
     "app:start/0 app:stop/0"
   ).
 
-wrap_tag_(T,L) when is_list(L) -> 
-  [ { T, X } || X <- L ].
-
-check_started_(Tag) ->
-  wrap_tag_(Tag,
-    [
-      ?_test(ls()),
-      ?_test(pwd()),
-      ?_test(ok),
-      ?_test(ok)
-    ] 
-  ).
-
-% check if the dir we're in end's in /tests
-check_cwd_helper_() ->
-   { ok, L } = file:get_cwd(),  
-   "stset/" ++ _  = lists:reverse(L).
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%  eunit,  test interfaces
-
--define(assertExists(File), 
-      { ok, _ } = file:read_file_info(File)).
--define(assertEnoent(File), 
-      { error, enoent } = file:read_file_info(File)).
-
+%%%% test interfaces %%%%
 
 datain_dataout_test_() ->
   Prefix = "foo",
@@ -512,18 +633,6 @@ datain_dataout_test_() ->
     }
   }.
 
-todo_better_test_() -> 
-  { setup,
-    fun start_helper_/0,
-    fun stop_helper_/1,
-    [
-       ?_assertMatch( {error, _ }, tune("blah") ),
-       ?_assertMatch( {error, _ }, resize("blah") ),
-       ?_assertMatch( {error, _ }, updatev("blah") ),
-       ?_test(ok)
-    ]
-  }.
-
 remote_cmds_test_() ->
   Dir = "makadir",
   { setup,
@@ -564,6 +673,18 @@ remote_cmds_test_() ->
     }
   }.
 
+c_test_() -> 
+  [
+    ?_test(
+      [ 
+        ["\"", "these", "\""], " ",
+        ["\"", "are",   "\""], " ",
+        ["\"", "my",    "\""], " ",
+        ["\"", "args",  "\""]  
+      ] = c(["these", "are", "my", "args"])),
+    ?_test([[ "\"", "a", "\""]] = c(["a"]))
+  ].
+
 pass_newlines_test_() ->
   M = "No newlines",
   { setup,
@@ -595,41 +716,7 @@ graph_to_stdout_saftey_test_() ->
     fun() -> ok end
   ].
 
-p_func(X,Steps) -> 
-  Pi = math:pi(),
-  5 * ( 
-    math:sin( 3*Pi/2 + X/(Steps / (8*Pi) )  )
-    + 1
-  ).
-
-check_last_(RRDFile,Now) -> 
-  fun () -> 
-    { ok, When } = erlrrd:last(RRDFile),
-    When = Now
-  end.
-
-time_since_epoch() ->
-  calendar:datetime_to_gregorian_seconds( erlang:universaltime())
-    - ( 719528 * 86400 ).
-
-
-cast(Blah) -> 
- gen_server:cast(?MODULE, Blah ).
-
-%%%%% eunit tests just for coverage %%%%%
-handle_cast_test_() ->
-  { setup,
-    fun start_helper_/0,
-    fun stop_helper_/1,
-    ?_test(cast(blah))
-  }.
-
-handle_info_test_() -> 
-  { setup,
-    fun start_helper_/0,
-    fun stop_helper_/1,
-    ?_test(?MODULE ! yo)
-  }.
+%%%% tests for corner cases %%%%
 
 cause_long_response_test_() -> 
   { setup,
@@ -654,6 +741,63 @@ cause_timeout_test_() ->
       ?_assertExit({port_timeout, _}, do(timeout, [], 1 )),
       ?_assertMatch( {ok, _ }, ls() )
     ]}
+  }.
+
+%%%% tests of privates %%%%
+
+join_test() -> 
+  [ "a", " ", "b", " ", "c"] = join(["a", "b", "c"], " ").
+join_test_() ->
+  [ 
+    ?_test([ "a", " ", "b", " ", "c"] = join(["a", "b", "c"], " ")),
+    ?_assertNot([ "a", "b", " ", "c"]  =:= join(["a", "b", "c"], " "))
+  ].
+
+has_newline_test_() ->
+  [ 
+    ?_test( true  = has_newline("\n")),
+    ?_test( true  = has_newline(["\n"])),
+    ?_test( true  = has_newline(
+      ["these", ["are", [ "my args" ] | <<"newline\n">> ], "so", "there"])),
+    ?_test( false = has_newline(
+      ["these", ["are", [ "my args" ] | <<"newline">> ], "so", "there"])),
+    ?_test( true  = has_newline(
+      ["these\n", ["are", [ "my args" ] | <<"newline">> ], "so", "there"])),
+    ?_test( true  = has_newline(
+      ["these", ["are", 
+      [ "my args" | [[[[[[[[ "blah\n"]]]]]]]] ] | <<"newline">> ], 
+      "so", "there"])),
+    ?_test( false = has_newline("")),
+    ?_test( false = has_newline([])),
+    ?_test( false = has_newline(<<>>))
+  ].
+
+%%%%% tests to get coverage %%%%%
+
+should_be_done_better_test_() -> 
+  { setup,
+    fun start_helper_/0,
+    fun stop_helper_/1,
+    [
+       ?_assertMatch( {error, _ }, tune("blah") ),
+       ?_assertMatch( {error, _ }, resize("blah") ),
+       ?_assertMatch( {error, _ }, updatev("blah") ),
+       ?_test(ok)
+    ]
+  }.
+
+handle_cast_test_() ->
+  { setup,
+    fun start_helper_/0,
+    fun stop_helper_/1,
+    ?_test(cast(blah))
+  }.
+
+handle_info_test_() -> 
+  { setup,
+    fun start_helper_/0,
+    fun stop_helper_/1,
+    ?_test(?MODULE ! yo)
   }.
 
 stop_helper_test_() -> 
@@ -684,133 +828,4 @@ stop_helper_test_() ->
 code_change_test() -> 
   { ok, state } = code_change( oldvsn, state, extra ).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% Gen server interface poo
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%% @hidden
-init(RRDToolCmd) -> 
-  process_flag(trap_exit, true),
-  Port = erlang:open_port(
-    {spawn, RRDToolCmd},
-    [ {line, 10000}, eof, exit_status, stream ] 
-  ),
-  {ok, #state{port = Port}}.
-
-%%
-%% handle_call
-%% @hidden
-handle_call({do, Action, Args, Timeout}, _From, #state{port = Port} = State) ->
-  Line = [ erlang:atom_to_list(Action), " ", Args , "\n"],
-  port_command(Port, Line),
-  case collect_response(Port, Timeout) of
-        {response, Response} -> 
-            {reply, { ok, Response }, State};
-        { error, timeout } ->
-            {stop, port_timeout, State};
-        { error, Error } -> 
-            {reply, { error, Error  }, State}
-  end.
-
-%% handle_cast
-%% @hidden
-handle_cast(Msg, State) -> 
-  io:format(user, "Got unexpected cast msg: ~p~n", [Msg]),
-  {noreply, State}.
-
-%% handle_info
-%% @hidden
-handle_info(Msg, State) -> 
-  io:format(user, "Got unexpected info msg: ~p~n", [Msg]),
-  {noreply, State}.
-
-%% terminate
-%% @hidden
-terminate(_Reason, _State) -> ok.
-
-%% code_change
-%% @hidden
-code_change(_OldVsn, State, _Extra) -> 
-  {ok, State}.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Private poo
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-do(Command, Args) -> 
-  do(Command, Args, 3000).
-do(Command, Args, Timeout) -> 
-  case has_newline(Args) of
-    true  -> { error, "No newlines" };
-    false -> gen_server:call (?MODULE, { do, Command, Args , Timeout} ) 
-  end.
-
-join([Head | [] ], _Sep) ->
-  [Head];
-join([Head | Tail], Sep) ->
-  [ Head, Sep | join(Tail, Sep) ].
-
-join_test() -> 
-  [ "a", " ", "b", " ", "c"] = join(["a", "b", "c"], " ").
-join_test_() ->
-  [ 
-    ?_test([ "a", " ", "b", " ", "c"] = join(["a", "b", "c"], " ")),
-    ?_assertNot([ "a", "b", " ", "c"]  =:= join(["a", "b", "c"], " "))
-  ].
-
-has_newline([]) -> false;
-has_newline(<<>>) -> false;
-has_newline([ H |  T]) 
-  when is_list(H); is_binary(H) ->
-    case has_newline(H) of
-      true -> true;
-      false -> has_newline(T)
-    end;
-has_newline([ H | T]) when is_integer(H) ->
-  if 
-    H =:= $\n -> true;
-    true -> has_newline(T)
-  end;
-has_newline(<<H:8,T/binary>>) ->
-  if 
-    H =:= $\n -> true;
-    true -> has_newline(T)
-  end.
-
-has_newline_test_() ->
-  [ 
-    ?_test( true  = has_newline("\n")),
-    ?_test( true  = has_newline(["\n"])),
-    ?_test( true  = has_newline(["these", ["are", [ "my args" ] | <<"newline\n">> ], "so", "there"])),
-    ?_test( false = has_newline(["these", ["are", [ "my args" ] | <<"newline">> ], "so", "there"])),
-    ?_test( true  = has_newline(["these\n", ["are", [ "my args" ] | <<"newline">> ], "so", "there"])),
-    ?_test( true  = has_newline(
-      ["these", ["are", [ "my args" | [[[[[[[[ "blah\n"]]]]]]]] ] | <<"newline">> ], "so", "there"])),
-    ?_test( false = has_newline("")),
-    ?_test( false = has_newline([])),
-    ?_test( false = has_newline(<<>>))
-  ].
-
-
-collect_response(Port, Timeout ) ->
-    collect_response(Port, [], [], Timeout ).
-
-collect_response( Port, RespAcc, LineAcc, Timeout) ->
-    receive
-        {Port, {data, {eol, "OK u:" ++ _T }}} ->
-            {response, lists:reverse(RespAcc)};
-        {Port, {data, {eol, "ERROR: " ++ Error }}} ->
-            {error, [ Error, lists:reverse(RespAcc)]};
-        {Port, {data, {eol, Result}}} ->
-            Line = lists:reverse([Result | LineAcc]),
-            collect_response(Port, [Line | RespAcc], [], Timeout);
-        {Port, {data, {noeol, Result}}} ->
-            collect_response(Port, RespAcc, [Result | LineAcc], Timeout)
-
-    %% Prevent the gen_server from hanging indefinitely in case the
-    %% spawned process is taking too long processing the request.
-    after Timeout ->  % TODO user configurable timeout.
-            { error, timeout }
-    end.
+-endif.
