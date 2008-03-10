@@ -1,0 +1,3 @@
+VERSION 0.2.1
+  * rebuild with latest framewerk to get erlrc hooks
+  * specify dependency on rrdtool

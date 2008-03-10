@@ -2,7 +2,7 @@
 # environment variable FW_PACKAGE_DEFAULT_MAINTAINER if non-empty
 
 FW_PACKAGE_NAME="erlrrd"
-FW_PACKAGE_VERSION="0.2.0"
+FW_PACKAGE_VERSION="0.2.1"
 FW_PACKAGE_MAINTAINER="fess <fess-erlrrd@fess.org>"
 FW_PACKAGE_SHORT_DESCRIPTION="rrdtool binding for erlang. [ via an erlang Port. ]"
 FW_PACKAGE_DESCRIPTION="`cat README`"
@@ -16,7 +16,7 @@ FW_SUBVERSION_TAG_ROOT="https://erlrrd.googlecode.com/svn/tags/"
 # 
 # For other packaging systems, the syntax is translated for you.
 
-FW_PACKAGE_DEPENDS=""
+FW_PACKAGE_DEPENDS="rrdtool"
 FW_PACKAGE_CONFLICTS=""
 FW_PACKAGE_PROVIDES=""
 FW_PACKAGE_REPLACES=""
