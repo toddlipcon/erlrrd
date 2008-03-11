@@ -665,7 +665,9 @@ remote_cmds_test_() ->
           fun() -> 
             % relys on '.' and '..' always returning first? 
             % is that a bad idea? 
-            { ok, [["d ."], ["d .."] | _] } = ls()
+            { ok, List } = ls(),
+            io:format(user," ~p~n", [List]),
+            ?assert( lists:any(fun(X) -> X =:= ["d .."] end, List))
           end },
         fun() -> commas_are_cool end
       ]
