@@ -10,6 +10,10 @@ do
        sleep 1
        echo "ERROR: timed out"
       ;;
+    die) 
+      echo "OK u:0.01 s:0.02 r:0.03"
+      exit 1
+      ;;
     longresponse)
       perl -le 'print "a234567890123456789012345678901234567890" x (255)'
       echo "OK u:0.01 s:0.02 r:0.03"

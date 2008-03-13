@@ -280,14 +280,20 @@ handle_call({do, Action, Args, Timeout}, _From, #state{port = Port} = State) ->
 
 %% handle_cast
 %% @hidden
-handle_cast(Msg, State) -> 
+handle_cast(_Msg, State) -> 
   % io:format(user, "Got unexpected cast msg: ~p~n", [Msg]),
   %% TODO error/event loging in erlang style.
   {noreply, State}.
 
 %% handle_info
 %% @hidden
-handle_info(Msg, State) -> 
+handle_info({ Port , {exit_status, Status}}, State) 
+  when 
+    Port =:= State#state.port
+  -> 
+  { stop, { port_exit, Status }, State};
+
+handle_info(_Msg, State) -> 
   % io:format(user, "Got unexpected info msg: ~p~n", [Msg]),
   %% TODO error/event loging in erlang style.
   {noreply, State}.
@@ -825,6 +831,21 @@ stop_helper_test_() ->
       ?_assertThrow({timeout,_}, stop_helper_(P, 1))
     end
   }.
+
+port_exit_test_() -> 
+  ?_assert(
+    begin
+      io:format(user, "~n==== test: expect erlrrd exit~n", []),
+      {ok,Pid} = start_link("./dummyrrdtool"),
+      {ok, _} = do(die, []),
+      receive 
+        { 'EXIT', Pid, {port_exit, 1} } -> true
+      after 4000 -> 
+        exit(Pid,kill),
+        false
+      end
+    end
+  ).
 
 code_change_test() -> 
   { ok, state } = code_change( oldvsn, state, extra ).

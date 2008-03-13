@@ -1,3 +1,6 @@
+Version 0.2.2
+  * catch port exit and exit the gen_server
+
 VERSION 0.2.1
   * rebuild with latest framewerk to get erlrc hooks
   * specify dependency on rrdtool
