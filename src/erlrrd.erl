@@ -15,7 +15,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--record( state, { port }  ).
+-record( state2, { port, timeout }  ).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Public 
@@ -35,11 +35,13 @@ stop() -> erlrrd_app:stop().
 %% @doc calls gen_server:start_link
 %%   RRDToolCmd is the command passed to open_port()
 %%   usually "rrdtool -"
-start_link(RRDToolCmd) ->
-  gen_server:start_link({local, ?MODULE}, ?MODULE, [RRDToolCmd], []).
+start_link(RRDToolCmd) when is_list(RRDToolCmd) ->
+  application:set_env(erlrrd, rrdtoolcmd, RRDToolCmd ),
+  start_link().
+
 %% @equiv start_link("rrdtool -")
-start_link() ->
-  start_link("rrdtool -").
+start_link() -> 
+  gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @spec combine(List) -> List
 %%   List = [ term() ]
@@ -256,27 +258,39 @@ pwd        ()     ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% @hidden
-init([RRDToolCmd]) -> 
+init([]) -> 
+  RRDToolCmd = case application:get_env(erlrrd, rrdtoolcmd) of
+    { ok, Cmd } ->  Cmd;
+    undefined -> "rrdtool -"
+  end,
+  Timeout = case application:get_env(erlrrd, timeout) of
+    { ok, T } -> T;
+    undefined -> 3000
+  end,
   process_flag(trap_exit, true),
   Port = erlang:open_port(
     {spawn, RRDToolCmd},
     [ {line, 10000}, eof, exit_status, stream ] 
   ),
-  {ok, #state{port = Port}}.
+  {ok, #state2{port = Port, timeout = Timeout}}.
 
 %% handle_call
 %% @hidden
-handle_call({do, Action, Args, Timeout}, _From, #state{port = Port} = State) ->
-  Line = [ erlang:atom_to_list(Action), " ", Args , "\n"],
-  port_command(Port, Line),
-  case collect_response(Port, Timeout) of
-        {response, Response} -> 
-            {reply, { ok, Response }, State};
-        { error, timeout } ->
-            {stop, port_timeout, State};
-        { error, Error } -> 
-            {reply, { error, Error  }, State}
-  end.
+handle_call(
+  {do, Action, Args }, 
+  _From, 
+  #state2{port = Port, timeout = Timeout } = State
+  ) ->
+    Line = [ erlang:atom_to_list(Action), " ", Args , "\n"],
+    port_command(Port, Line),
+    case collect_response(Port, Timeout) of
+          {response, Response} -> 
+              {reply, { ok, Response }, State};
+          { error, timeout } ->
+              {stop, port_timeout, State};
+          { error, Error } -> 
+              {reply, { error, Error  }, State}
+    end.
 
 %% handle_cast
 %% @hidden
@@ -289,7 +303,7 @@ handle_cast(_Msg, State) ->
 %% @hidden
 handle_info({ Port , {exit_status, Status}}, State) 
   when 
-    Port =:= State#state.port
+    Port =:= State#state2.port
   -> 
   { stop, { port_exit, Status }, State};
 
@@ -312,11 +326,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 do(Command, Args) -> 
-  do(Command, Args, 3000).
-do(Command, Args, Timeout) -> 
   case has_newline(Args) of
     true  -> { error, "No newlines" };
-    false -> gen_server:call (?MODULE, { do, Command, Args , Timeout} ) 
+    false -> gen_server:call (?MODULE, { do, Command, Args } ) 
   end.
 
 join([Head | [] ], _Sep) ->
@@ -409,6 +421,8 @@ check_last_(RRDFile,Now) ->
   end.
 
 start_helper_() -> 
+  application:unset_env(erlrrd, rrdtoolcmd),
+  application:unset_env(erlrrd, timeout),
   {ok, Pid} = start_link(), 
   Pid.
 stop_helper_(Pid) -> stop_helper_(Pid, 3000).
@@ -740,14 +754,12 @@ cause_timeout_test_() ->
   { setup,
     fun()  -> 
       check_cwd_helper_(),
+      ok = application:set_env(erlrrd, timeout, 1),
       { ok, Pid } = erlrrd_sup:start_link("./dummyrrdtool -"),
       Pid
     end,
     fun stop_helper_/1,
-    { inorder, [ 
-      ?_assertExit({port_timeout, _}, do(timeout, [], 1 )),
-      ?_assertMatch( {ok, _ }, ls() )
-    ]}
+    ?_assertExit({port_timeout, _}, do(timeout, []))
   }.
 
 %%%% tests of privates %%%%

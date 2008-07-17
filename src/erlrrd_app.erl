@@ -9,12 +9,7 @@ start() ->
   application:start(erlrrd).
 
 start(_Type, _Args) -> 
-  case application:get_env(erlrrd, rrdtoolcmd) of
-    { ok, RRDToolCmd } -> 
-      erlrrd_sup:start_link(RRDToolCmd);
-    undefined -> 
-      erlrrd_sup:start_link()
-  end.
+  erlrrd_sup:start_link().
 
 stop() -> 
   application:stop(erlrrd).

@@ -13,7 +13,8 @@
 %%     Pid = pid()
 %%     Error = {already_started,Pid} | shutdown | term()
 start_link(RRDToolCmd) ->
-  supervisor:start_link(erlrrd_sup, [RRDToolCmd]).
+  application:set_env(erlrrd_sup, rrdtoolcmd, RRDToolCmd),
+  supervisor:start_link(erlrrd_sup, []).
 
 %% @spec start_link() ->  Result
 %%   Result = {ok,Pid} | ignore | {error,Error}
@@ -22,7 +23,7 @@ start_link(RRDToolCmd) ->
 start_link() -> 
   supervisor:start_link(erlrrd_sup, []).
 
-init(Args) -> 
+init(_) -> 
   { 
     ok, 
     { 
@@ -30,7 +31,7 @@ init(Args) ->
       [ 
         { 
           erlrrd,
-          { erlrrd, start_link, Args },
+          { erlrrd, start_link, [] },
           permanent,
           3000,
           worker,

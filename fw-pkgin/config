@@ -2,7 +2,7 @@
 # environment variable FW_PACKAGE_DEFAULT_MAINTAINER if non-empty
 
 FW_PACKAGE_NAME="erlrrd"
-FW_PACKAGE_VERSION="0.2.2"
+FW_PACKAGE_VERSION="0.3.0"
 FW_PACKAGE_MAINTAINER="fess <fess-erlrrd@fess.org>"
 FW_PACKAGE_SHORT_DESCRIPTION="rrdtool binding for erlang. [ via an erlang Port. ]"
 FW_PACKAGE_DESCRIPTION="`cat README`"
@@ -24,4 +24,7 @@ FW_PACKAGE_REPLACES=""
 FW_PACKAGE_BUILD_DEPENDS="eunit"
 FW_PACKAGE_BUILD_CONFLICTS=""
 
-FW_ERL_APP_ENVIRONMENT="[ {rrdtoolcmd, \"rrdtool -\"} ] "
+FW_ERL_APP_ENVIRONMENT="[ 
+  {rrdtoolcmd, \"rrdtool -\"},
+  {timeout, 30000 }
+  ]"
