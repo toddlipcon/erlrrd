@@ -1,10 +1,10 @@
-all: dirs deps
+all: dirs build-deps
 	(cd src;$(MAKE))
 
-deps:
+build-deps:
 	cd deps/eunit && $(MAKE)
 
-dirs: ebin doc
+dirs:
 	mkdir -p ebin doc
 clean:
 	(cd src;$(MAKE) clean)
